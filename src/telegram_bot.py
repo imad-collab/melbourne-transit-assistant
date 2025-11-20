@@ -366,10 +366,17 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"No parking found near {location}")
             return
 
-        # Format response with inline keyboard buttons for Google Maps
-        lines = [f"🅿️ Parking spots near {location}:\n"]
+        # Filter parking spots under 1 km (1000 meters)
+        nearby_parking = [item for item in availability if item.get("distance", float('inf')) < 1000]
         
-        for i, item in enumerate(availability[:5], 1):
+        if not nearby_parking:
+            await message.reply_text(f"❌ No parking found under 1 km near {location}\n\nClosest option is {availability[0].get('distance', 0)/1000:.1f}km away.")
+            return
+
+        # Format response with inline keyboard buttons for Google Maps
+        lines = [f"🅿️ Parking spots under 1km from {location}:\n"]
+        
+        for i, item in enumerate(nearby_parking, 1):
             name = item.get("name", "Parking")
             distance = item.get("distance", 0)
             address = item.get("address", "")
@@ -392,14 +399,14 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
             lines.append("")  # Blank line between entries
 
         text = "\n".join(lines)
-        LOGGER.info(f"Sending find_parking response: {len(text)} chars")
+        LOGGER.info(f"Sending find_parking response: {len(text)} chars with {len(nearby_parking)} spots under 1km")
         
         # Create inline keyboard with Google Maps buttons
         keyboard = []
-        for i, item in enumerate(availability[:5], 1):
+        for item in nearby_parking:
             latitude = item.get("latitude")
             longitude = item.get("longitude")
-            name = item.get("name", f"Parking {i}")
+            name = item.get("name", "Parking")
             
             if latitude is not None and longitude is not None:
                 # Create Google Maps URL
