@@ -84,20 +84,22 @@ class HEREParkingClient:
         limit: int = 10,
         timeout: int = 10,
     ) -> List[dict]:
-        """Search for parking locations near a given coordinate.
+        """Search for car parking locations near a given coordinate.
         
-        Returns list of parking facilities with:
+        Returns list of car parking facilities with:
         - title: Name of parking location
         - position: lat/lon coordinates
         - address: Full address
         - distance: Distance from search center (meters)
+        
+        Filters to show only car/auto parking, excluding motorcycles and bicycles.
         """
 
         params = {
             "at": f"{latitude},{longitude}",
-            "q": "parking",
+            "q": "car parking",  # Search specifically for car parking
             "apikey": self.api_key,
-            "limit": limit,
+            "limit": limit * 2,  # Get more results to compensate for filtering
         }
 
         LOGGER.debug(
@@ -117,6 +119,20 @@ class HEREParkingClient:
             items = payload.get("items", [])
             LOGGER.debug("Found %d parking items from HERE API", len(items))
 
+            # Keywords to exclude (motorcycles, bicycles, scooters, etc.)
+            exclude_keywords = [
+                "motorcycle",
+                "motorbike",
+                "bike",
+                "bicycle",
+                "scooter",
+                "two wheeler",
+                "two-wheeler",
+                "cycle",
+                "bikes only",
+                "motorcycles only",
+            ]
+
             results: List[dict] = []
             for item in items:
                 # Extract parking information
@@ -125,6 +141,12 @@ class HEREParkingClient:
                 address_str = address.get("label", "Address unavailable")
                 position = item.get("position", {})
                 distance = item.get("distance", 0)
+
+                # Filter: Exclude motorcycle/bicycle only parking
+                combined_text = f"{title} {address_str}".lower()
+                if any(keyword in combined_text for keyword in exclude_keywords):
+                    LOGGER.debug("Skipping non-car parking: %s", title)
+                    continue
 
                 results.append(
                     {
@@ -137,6 +159,10 @@ class HEREParkingClient:
                         "id": item.get("id", title.lower().replace(" ", "_")),
                     }
                 )
+                
+                # Stop once we have enough car parking results
+                if len(results) >= limit:
+                    break
 
             return results
 
