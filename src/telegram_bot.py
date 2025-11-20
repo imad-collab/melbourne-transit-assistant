@@ -18,7 +18,6 @@ from telegram.ext import (
 
 from .ptv_client import PTVClient
 from .parking_service import (
-    MissingApiKeyError,
     UnknownParkingAreaError,
     fetch_parking_availability,
     list_parking_areas,
@@ -229,7 +228,7 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """List parking availability via TomTom."""
+    """List parking availability via TomTom (or mock data if unavailable)."""
 
     try:
         message = update.effective_message
@@ -248,11 +247,8 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             suggestions = ", ".join(area.key for area in list_parking_areas())
             await message.reply_text(f"Unknown area '{area_key}'. Try one of: {suggestions}")
             return
-        except MissingApiKeyError:
-            await message.reply_text("Parking is not configured (missing TomTom API key).")
-            return
         except Exception as exc:  # noqa: BLE001
-            LOGGER.exception("TomTom parking request failed")
+            LOGGER.exception("Parking request failed")
             await message.reply_text(f"Parking lookup failed: {exc}")
             return
 
@@ -260,15 +256,24 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await message.reply_text("No parking locations returned.")
             return
 
-        lines = [f"Parking availability for {area_key}:"]
+        lines = [f"🅿️ Parking in {area_key}:"]
         for item in availability[:10]:
             status = item.get("status") or "UNKNOWN"
             available = item.get("available")
             total = item.get("total")
             name = item.get("name") or item.get("id")
             address = item.get("address") or "Address unavailable"
+            
+            # Add emoji based on availability
+            if status == "AVAILABLE":
+                emoji = "✅"
+            elif status == "LIMITED":
+                emoji = "⚠️"
+            else:
+                emoji = "❌"
+            
             lines.append(
-                f"• {name} – {status} ({available}/{total} free)\n  {address}"
+                f"{emoji} {name}\n   {available}/{total} free | {address}"
             )
 
         await message.reply_text("\n".join(lines))
