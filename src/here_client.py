@@ -94,7 +94,9 @@ class HEREParkingClient:
                         victoria_items.append(item)
                         LOGGER.debug(f"✓ Victoria: {label} ({lat:.4f}, {lon:.4f}) [{state}]")
                     else:
-                        LOGGER.debug(f"✗ Non-Victoria: {label} ({lat:.4f if lat else 0:.4f}, {lon:.4f if lon else 0:.4f}) [{state}]")
+                        lat_str = f"{lat:.4f}" if lat else "0.0000"
+                        lon_str = f"{lon:.4f}" if lon else "0.0000"
+                        LOGGER.debug(f"✗ Non-Victoria: {label} ({lat_str}, {lon_str}) [{state}]")
                 
                 if not victoria_items:
                     LOGGER.debug(f"No Victoria results for '{search_query}' - trying next query")
