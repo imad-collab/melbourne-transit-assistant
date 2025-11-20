@@ -140,26 +140,35 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         LOGGER.info(f"=== /departures command START ===")
-        LOGGER.info(f"Args: {context.args}")
-        LOGGER.info(f"Bot data keys: {context.application.bot_data.keys()}")
+        LOGGER.info(f"Raw context.args: {context.args}")
+        LOGGER.info(f"Type of args: {type(context.args)}")
+        LOGGER.info(f"Num args: {len(context.args) if context.args else 0}")
 
-        if not context.args:
+        # Handle case where all args are in one string (space-separated)
+        args = context.args
+        if args and len(args) == 1 and ' ' in args[0]:
+            LOGGER.info("Detected space-separated args in single string, splitting...")
+            args = args[0].split()
+            LOGGER.info(f"After split: {args}")
+
+        if not args:
             LOGGER.info("No args provided, sending usage message")
-            await message.reply_text("Usage: /departures <stop_id> [route_type] [max_results]")
+            await message.reply_text("Usage: /departures <stop_id> [route_type] [max_results]\n\nExample: /departures 1071 0 5")
             return
 
-        stop_id = _parse_int(context.args[0])
+        stop_id = _parse_int(args[0])
         if stop_id is None:
-            LOGGER.info(f"Invalid stop_id: {context.args[0]}")
-            await message.reply_text("Stop ID must be an integer")
+            LOGGER.info(f"Invalid stop_id: {args[0]}")
+            await message.reply_text(f"Stop ID must be an integer, got: {args[0]}")
             return
 
-        route_type = (
-            _parse_int(context.args[1], default=0) if len(context.args) > 1 else 0
-        ) or 0
-        max_results = (
-            _parse_int(context.args[2], default=5) if len(context.args) > 2 else 5
-        ) or 5
+        route_type = _parse_int(args[1], default=0) if len(args) > 1 else 0
+        if route_type is None:
+            route_type = 0
+        
+        max_results = _parse_int(args[2], default=5) if len(args) > 2 else 5
+        if max_results is None:
+            max_results = 5
 
         LOGGER.info(f"Parsed: stop_id={stop_id}, route_type={route_type}, max_results={max_results}")
         
@@ -169,7 +178,7 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await message.reply_text("Bot configuration error: PTV client not initialized")
             return
 
-        LOGGER.info(f"Got PTVClient: {ptv_client}")
+        LOGGER.info(f"Got PTVClient: {type(ptv_client)}")
         LOGGER.info(f"Calling get_departures...")
         
         response = ptv_client.get_departures(
@@ -214,7 +223,7 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         LOGGER.exception(f"=== ERROR in departures_command ===: {e}")
         try:
             if update.effective_message:
-                await update.effective_message.reply_text(f"Error: {str(e)[:100]}")
+                await update.effective_message.reply_text(f"Error: {str(e)[:150]}")
         except Exception as send_err:
             LOGGER.error(f"Failed to send error message: {send_err}")
 
