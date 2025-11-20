@@ -140,7 +140,7 @@ def main():
     print("\n🚂 Tarneit to Southern Cross Train Finder\n")
     
     # You can change these values or make them interactive
-    TARGET_HOUR = 19  # 7 PM in 24-hour format
+    TARGET_HOUR = 1  # 1 AM in 24-hour format
     TARGET_MINUTE = 0  # Sharp hour
     
     find_trains_to_southern_cross(TARGET_HOUR, TARGET_MINUTE)

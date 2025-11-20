@@ -11,7 +11,7 @@ from config.credentials import DEV_ID, API_KEY
 
 def find_metro_trains(target_hour=19, target_minute=0):
     """
-    Find METRO trains from Tarneit to Southern Cross around a specific time
+    Find METRO trains from Southern Cross to Tarneit around a specific time
     
     Args:
         target_hour: Hour in 24h format (e.g., 19 for 7 PM)
@@ -19,12 +19,12 @@ def find_metro_trains(target_hour=19, target_minute=0):
     """
     client = PTVClient(DEV_ID, API_KEY)
     
-    # Tarneit Railway Station - Stop ID: 1071, Route Type: 0 (Metro)
-    tarneit_stop_id = 1071
+    # Southern Cross Railway Station - Stop ID: 1071, Route Type: 0 (Metro)
+    southern_cross_stop_id = 1071
     route_type = 0  # Metro Trains
     
     print("="*80)
-    print(f"🚇 METRO TRAINS: TARNEIT → SOUTHERN CROSS (Suburban Network)")
+    print(f"🚇 METRO TRAINS: SOUTHERN CROSS → TARNEIT (Suburban Network)")
     print(f"⏰ Target Time: {target_hour:02d}:{target_minute:02d}")
     print("="*80)
     
@@ -32,7 +32,7 @@ def find_metro_trains(target_hour=19, target_minute=0):
         print("\n⏳ Fetching Metro train departures...")
         departures_data = client.get_departures(
             route_type, 
-            tarneit_stop_id, 
+            southern_cross_stop_id, 
             max_results=100
         )
         
@@ -165,11 +165,11 @@ def find_metro_trains(target_hour=19, target_minute=0):
 
 def main():
     """Main function with customizable time"""
-    print("\n🚇 Metro Train Finder: Tarneit → Southern Cross\n")
+    print("\n🚇 Metro Train Finder: Southern Cross → Tarneit\n")
     
     # Customizable target time
-    TARGET_HOUR = 19  # 7 PM in 24-hour format
-    TARGET_MINUTE = 0  # Sharp hour
+    TARGET_HOUR = 1  # 1:45 AM in 24-hour format
+    TARGET_MINUTE = 45  # 45 minutes
     
     find_metro_trains(TARGET_HOUR, TARGET_MINUTE)
     
