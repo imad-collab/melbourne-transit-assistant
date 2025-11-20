@@ -65,7 +65,8 @@ class HEREParkingClient:
                 LOGGER.warning("No geocode results for: %s", location)
                 return None
 
-            # STRICTLY filter for Victoria locations only
+            # STRICTLY filter for Victoria locations only using geographic bounds
+            # Geographic bounds are more reliable than address state field
             victoria_items = []
             for item in items:
                 address = item.get("address", {})
@@ -73,27 +74,29 @@ class HEREParkingClient:
                 position = item.get("position", {})
                 lat = position.get("lat")
                 lon = position.get("lng")
+                label = address.get("label", "")
                 
-                # Check both state name AND geographic bounds
-                is_victoria_state = "Victoria" in state or "VIC" in state or state == "VIC"
+                # Primary check: within Victoria geographic bounds
                 is_within_bounds = (
                     lat and lon and
                     VICTORIA_BOUNDS["lat_min"] <= lat <= VICTORIA_BOUNDS["lat_max"] and
                     VICTORIA_BOUNDS["lon_min"] <= lon <= VICTORIA_BOUNDS["lon_max"]
                 )
                 
-                if is_victoria_state and is_within_bounds:
+                if is_within_bounds:
                     victoria_items.append(item)
-                    LOGGER.debug("Valid Victoria location: %s (%s)", 
-                               address.get("label", ""), state)
+                    LOGGER.info("✓ Victoria result: %s (%.4f, %.4f) [%s]", 
+                               label, lat, lon, state or "no state")
                 else:
-                    LOGGER.debug("Rejected non-Victoria location: %s (%s) at (%.4f, %.4f)", 
-                               address.get("label", ""), state, lat or 0, lon or 0)
+                    LOGGER.info("✗ REJECTED non-Victoria: %s (%.4f, %.4f) [%s]", 
+                               label, lat or 0, lon or 0, state)
             
             if not victoria_items:
-                LOGGER.warning("No Victoria/Melbourne results found for: %s. Found %d non-Victoria results.", 
+                LOGGER.warning("❌ NO VICTORIA RESULTS for '%s' - rejected %d locations outside bounds", 
                              location, len(items))
                 return None
+            
+            LOGGER.info("✓ Found %d Victoria locations", len(victoria_items))
             
             # Prefer Melbourne city, then other Victoria locations
             best_item = None
@@ -115,8 +118,8 @@ class HEREParkingClient:
             if lat and lon:
                 address_label = best_item.get("address", {}).get("label", "")
                 state = best_item.get("address", {}).get("state", "")
-                LOGGER.info("Geocoded '%s' to (%.4f, %.4f) in %s - %s", 
-                          location, lat, lon, state, address_label)
+                LOGGER.info("✓ GEOCODED '%s' → (%.4f, %.4f) in %s - %s", 
+                          location, lat, lon, state or "Victoria", address_label)
                 return (lat, lon)
 
             return None
