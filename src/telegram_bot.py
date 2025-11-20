@@ -493,6 +493,98 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.effective_message.reply_text("Sorry, an error occurred.")
 
 
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /analyze command for text analysis using OpenAI."""
+
+    try:
+        message = update.effective_message
+        if message is None:
+            return
+
+        LOGGER.info(f"Received /analyze command with args: {context.args}")
+
+        # Get text to analyze
+        if not context.args:
+            await message.reply_text(
+                "📝 Analyze any text!\n\n"
+                "Usage: /analyze <text_to_analyze>\n\n"
+                "Examples:\n"
+                "  /analyze The quick brown fox jumps over the lazy dog\n"
+                "  /analyze I love this product, it's amazing!\n"
+                "  /analyze Climate change is a serious issue we must address"
+            )
+            return
+
+        # Join args as the text
+        user_text = " ".join(context.args)
+        LOGGER.info(f"Analyzing text: {len(user_text)} chars")
+
+        # Get OpenAI API key
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not openai_key or openai_key == "your_openai_api_key_here":
+            await message.reply_text(
+                "❌ OpenAI not configured. Please set OPENAI_API_KEY in your .env file.\n\n"
+                "Get a free API key at: https://platform.openai.com/api-keys"
+            )
+            return
+
+        try:
+            from .openai_assistant import TextAnalyzer
+
+            # Show analyzing status
+            await message.reply_text("🔍 Analyzing your text...")
+
+            # Create analyzer
+            analyzer = TextAnalyzer(openai_key)
+
+            # Perform analysis
+            analysis = analyzer.analyze_all(user_text)
+
+            # Format response
+            response_lines = []
+            response_lines.append("📊 Text Analysis Results:\n")
+
+            # Summary
+            response_lines.append("📌 Summary:")
+            response_lines.append(analysis["summary"])
+            response_lines.append("")
+
+            # Key points
+            response_lines.append("🔑 Key Points:")
+            for point in analysis["key_points"][:5]:  # Limit to 5 points
+                if point.strip():
+                    response_lines.append(f"  • {point.strip()}")
+            response_lines.append("")
+
+            # Sentiment
+            sentiment_info = analysis["sentiment"]
+            sentiment = sentiment_info["sentiment"]
+            sentiment_emoji = {
+                "POSITIVE": "😊",
+                "NEGATIVE": "😞",
+                "NEUTRAL": "😐",
+            }.get(sentiment, "❓")
+            response_lines.append(f"😊 Sentiment: {sentiment_emoji} {sentiment}")
+
+            text = "\n".join(response_lines)
+
+            # Check message length (Telegram limit is 4096)
+            if len(text) > 4000:
+                text = text[:3950] + "\n...(truncated)"
+
+            await message.reply_text(text)
+            LOGGER.info(f"Analysis sent: {len(text)} chars")
+
+        except Exception as e:
+            LOGGER.exception(f"Text analysis error: {e}")
+            await message.reply_text(f"❌ Error analyzing text: {str(e)[:100]}")
+
+    except Exception as e:
+        LOGGER.exception(f"Error in analyze_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text("Sorry, an error occurred.")
+
+
 def build_application(config: BotConfig) -> Application:
     ptv_client = build_ptv_client(config)
     application: Application = (
@@ -509,6 +601,7 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CommandHandler("parking", parking_command))
     application.add_handler(CommandHandler("find_parking", find_parking_command))
     application.add_handler(CommandHandler("ask", ask_command))
+    application.add_handler(CommandHandler("analyze", analyze_command))
     application.add_handler(CommandHandler("parking_areas", list_parking_command))
 
     # Add error handler
