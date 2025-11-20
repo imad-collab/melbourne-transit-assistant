@@ -127,114 +127,124 @@ def _parse_int(value: str, *, default: Optional[int] = None) -> Optional[int]:
 async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /departures command requests."""
 
-    message = update.effective_message
-    if message is None:
-        return
-
-    LOGGER.info(f"Received /departures command with args: {context.args}")
-
-    if not context.args:
-        await message.reply_text("Usage: /departures <stop_id> [route_type] [max_results]")
-        return
-
-    stop_id = _parse_int(context.args[0])
-    if stop_id is None:
-        await message.reply_text("Stop ID must be an integer")
-        return
-
-    route_type = (
-        _parse_int(context.args[1], default=0) if len(context.args) > 1 else 0
-    ) or 0
-    max_results = (
-        _parse_int(context.args[2], default=5) if len(context.args) > 2 else 5
-    ) or 5
-
-    ptv_client: PTVClient = context.application.bot_data["ptv_client"]
-
     try:
-        LOGGER.info(f"Fetching departures: stop_id={stop_id}, route_type={route_type}, max_results={max_results}")
-        response = ptv_client.get_departures(
-            route_type=route_type,
-            stop_id=stop_id,
-            max_results=max_results,
-            expand=["run", "route", "stop"],
-        )
-        LOGGER.info(f"Response received: {len(response.get('departures', []))} departures")
-    except Exception as exc:  # noqa: BLE001 simple logging to user
-        LOGGER.exception("PTV departures request failed")
-        await message.reply_text(f"Failed to retrieve departures: {exc}")
-        return
+        message = update.effective_message
+        if message is None:
+            return
 
-    departures = response.get("departures", [])
-    if not departures:
-        await message.reply_text("No upcoming departures found.")
-        return
+        LOGGER.info(f"Received /departures command with args: {context.args}")
 
-    formatted_lines = [
-        f"Departures for stop {stop_id} (route type {route_type})",
-        "",
-    ]
+        if not context.args:
+            await message.reply_text("Usage: /departures <stop_id> [route_type] [max_results]")
+            return
 
-    for dep in departures[:10]:
-        run_id = dep.get("run_id")
-        route_id = dep.get("route_id")
-        estimated = dep.get("estimated_departure_utc") or dep.get("scheduled_departure_utc")
-        platform = dep.get("platform_number")
-        formatted_lines.append(
-            "• Run #{run_id} on route {route_id} at {time}{platform}".format(
-                run_id=run_id,
-                route_id=route_id,
-                time=estimated or "unknown time",
-                platform=f" (Platform {platform})" if platform else "",
+        stop_id = _parse_int(context.args[0])
+        if stop_id is None:
+            await message.reply_text("Stop ID must be an integer")
+            return
+
+        route_type = (
+            _parse_int(context.args[1], default=0) if len(context.args) > 1 else 0
+        ) or 0
+        max_results = (
+            _parse_int(context.args[2], default=5) if len(context.args) > 2 else 5
+        ) or 5
+
+        ptv_client: PTVClient = context.application.bot_data["ptv_client"]
+
+        try:
+            LOGGER.info(f"Fetching departures: stop_id={stop_id}, route_type={route_type}, max_results={max_results}")
+            response = ptv_client.get_departures(
+                route_type=route_type,
+                stop_id=stop_id,
+                max_results=max_results,
+                expand=["run", "route", "stop"],
             )
-        )
+            LOGGER.info(f"Response received: {len(response.get('departures', []))} departures")
+        except Exception as exc:  # noqa: BLE001 simple logging to user
+            LOGGER.exception("PTV departures request failed")
+            await message.reply_text(f"Failed to retrieve departures: {exc}")
+            return
 
-    await message.reply_text("\n".join(formatted_lines))
+        departures = response.get("departures", [])
+        if not departures:
+            await message.reply_text("No upcoming departures found.")
+            return
+
+        formatted_lines = [
+            f"Departures for stop {stop_id} (route type {route_type})",
+            "",
+        ]
+
+        for dep in departures[:10]:
+            run_id = dep.get("run_id")
+            route_id = dep.get("route_id")
+            estimated = dep.get("estimated_departure_utc") or dep.get("scheduled_departure_utc")
+            platform = dep.get("platform_number")
+            formatted_lines.append(
+                "• Run #{run_id} on route {route_id} at {time}{platform}".format(
+                    run_id=run_id,
+                    route_id=route_id,
+                    time=estimated or "unknown time",
+                    platform=f" (Platform {platform})" if platform else "",
+                )
+            )
+
+        await message.reply_text("\n".join(formatted_lines))
+    except Exception as e:
+        LOGGER.exception(f"Error in departures_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text("Sorry, an error occurred processing your request.")
 
 
 async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """List parking availability via TomTom."""
 
-    message = update.effective_message
-    if message is None:
-        return
-
-    LOGGER.info(f"Received /parking command with args: {context.args}")
-
-    area_key = context.args[0].lower() if context.args else "melbourne_cbd"
-
     try:
-        LOGGER.info(f"Fetching parking availability for area: {area_key}")
-        availability = fetch_parking_availability(area_key)
-        LOGGER.info(f"Got {len(availability)} parking locations")
-    except UnknownParkingAreaError:
-        suggestions = ", ".join(area.key for area in list_parking_areas())
-        await message.reply_text(f"Unknown area '{area_key}'. Try one of: {suggestions}")
-        return
-    except MissingApiKeyError:
-        await message.reply_text("Parking is not configured (missing TomTom API key).")
-        return
-    except Exception as exc:  # noqa: BLE001
-        LOGGER.exception("TomTom parking request failed")
-        await message.reply_text(f"Parking lookup failed: {exc}")
-        return
+        message = update.effective_message
+        if message is None:
+            return
 
-    if not availability:
-        await message.reply_text("No parking locations returned.")
-        return
+        LOGGER.info(f"Received /parking command with args: {context.args}")
 
-    lines = [f"Parking availability for {area_key}:"]
-    for item in availability[:10]:
-        status = item.get("status") or "UNKNOWN"
-        available = item.get("available")
-        total = item.get("total")
-        name = item.get("name") or item.get("id")
-        address = item.get("address") or "Address unavailable"
-        lines.append(
-            f"• {name} – {status} ({available}/{total} free)\n  {address}"
-        )
+        area_key = context.args[0].lower() if context.args else "melbourne_cbd"
 
-    await message.reply_text("\n".join(lines))
+        try:
+            LOGGER.info(f"Fetching parking availability for area: {area_key}")
+            availability = fetch_parking_availability(area_key)
+            LOGGER.info(f"Got {len(availability)} parking locations")
+        except UnknownParkingAreaError:
+            suggestions = ", ".join(area.key for area in list_parking_areas())
+            await message.reply_text(f"Unknown area '{area_key}'. Try one of: {suggestions}")
+            return
+        except MissingApiKeyError:
+            await message.reply_text("Parking is not configured (missing TomTom API key).")
+            return
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("TomTom parking request failed")
+            await message.reply_text(f"Parking lookup failed: {exc}")
+            return
+
+        if not availability:
+            await message.reply_text("No parking locations returned.")
+            return
+
+        lines = [f"Parking availability for {area_key}:"]
+        for item in availability[:10]:
+            status = item.get("status") or "UNKNOWN"
+            available = item.get("available")
+            total = item.get("total")
+            name = item.get("name") or item.get("id")
+            address = item.get("address") or "Address unavailable"
+            lines.append(
+                f"• {name} – {status} ({available}/{total} free)\n  {address}"
+            )
+
+        await message.reply_text("\n".join(lines))
+    except Exception as e:
+        LOGGER.exception(f"Error in parking_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text("Sorry, an error occurred processing your request.")
 
 
 async def list_parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -264,7 +274,22 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CommandHandler("parking", parking_command))
     application.add_handler(CommandHandler("parking_areas", list_parking_command))
 
+    # Add error handler
+    application.add_error_handler(error_handler)
+
     return application
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors caused by updates."""
+    LOGGER.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                f"Sorry, an error occurred. Please try again."
+            )
+        except Exception as e:
+            LOGGER.error(f"Failed to send error message: {e}")
 
 
 def _post_init(ptv_client: PTVClient):
