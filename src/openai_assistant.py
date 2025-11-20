@@ -263,3 +263,169 @@ class TextAnalyzer:
             "sentiment": self.sentiment_analysis(text),
         }
 
+
+class InputValidator:
+    """Validates user input using AI and generates enhanced output."""
+
+    def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("OpenAI API key is required")
+        self.client = OpenAI(api_key=api_key)
+        self.model = "gpt-3.5-turbo"
+
+    def validate_input(self, user_input: str, context: str = "general") -> dict:
+        """Validate user input and return assessment.
+        
+        Args:
+            user_input: The user's raw input text
+            context: Context for validation (general, parking, transit, etc.)
+            
+        Returns:
+            {
+                "is_valid": bool,
+                "is_safe": bool,
+                "reason": str,
+                "suggestions": str,
+                "confidence": float (0-1)
+            }
+        """
+        LOGGER.info(f"Validating input ({len(user_input)} chars) in context: {context}")
+
+        system_prompt = f"""You are an input validation assistant. Analyze the user input and validate it.
+        
+Context: {context}
+
+Check for:
+1. Is the input meaningful and not spam?
+2. Is it safe and appropriate?
+3. Can it be processed by the system?
+
+Respond with ONLY valid JSON:
+{{
+    "is_valid": true/false,
+    "is_safe": true/false,
+    "reason": "brief reason",
+    "suggestions": "suggestions for improvement or alternative phrasing",
+    "confidence": 0.0-1.0
+}}
+"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Validate this input: '{user_input}'"},
+                ],
+                temperature=0.5,
+                max_tokens=200,
+            )
+
+            response_text = response.choices[0].message.content
+            if response_text:
+                response_text = response_text.strip()
+            else:
+                raise ValueError("Empty response from API")
+
+            # Parse JSON response
+            result = json.loads(response_text)
+            return result
+
+        except json.JSONDecodeError as e:
+            LOGGER.error(f"Failed to parse validation response: {e}")
+            return {
+                "is_valid": True,  # Default to valid if can't parse
+                "is_safe": True,
+                "reason": "Could not validate, allowing by default",
+                "suggestions": "",
+                "confidence": 0.3,
+            }
+        except Exception as e:
+            LOGGER.exception(f"Input validation error: {e}")
+            return {
+                "is_valid": True,
+                "is_safe": True,
+                "reason": "Validation service error",
+                "suggestions": "",
+                "confidence": 0.0,
+            }
+
+    def generate_response(self, input_text: str, analysis_result: dict) -> str:
+        """Generate an enhanced response based on the analysis.
+        
+        Args:
+            input_text: Original user input
+            analysis_result: Result from validate_input()
+            
+        Returns:
+            Enhanced response string
+        """
+        LOGGER.info("Generating enhanced response")
+
+        if not analysis_result.get("is_valid"):
+            return f"""❌ Input could not be processed.
+
+**Reason:** {analysis_result.get('reason', 'Invalid input')}
+
+**Suggestions:** {analysis_result.get('suggestions', 'Please rephrase your input')}"""
+
+        if not analysis_result.get("is_safe"):
+            return f"""⚠️ Input flagged as unsafe.
+
+**Reason:** {analysis_result.get('reason', 'Inappropriate content')}
+
+Please provide a different input."""
+
+        # Generate constructive response
+        system_prompt = f"""You are a helpful assistant. The user's input was validated and approved.
+Their input: '{input_text}'
+
+Generate a friendly, constructive response acknowledging their input and suggesting what to do next.
+Keep it concise (2-3 sentences)."""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": input_text},
+                ],
+                temperature=0.7,
+                max_tokens=150,
+            )
+
+            response_content = response.choices[0].message.content
+            if response_content:
+                return response_content.strip()
+            return "✓ Input received. Processing your request..."
+
+        except Exception as e:
+            LOGGER.exception(f"Response generation error: {e}")
+            return "✓ Input received. Processing your request..."
+
+    def validate_and_respond(self, user_input: str, context: str = "general") -> dict:
+        """Complete pipeline: validate input and generate response.
+        
+        Returns:
+            {
+                "validation": {...validation result...},
+                "response": "formatted response",
+                "should_process": bool (True if valid and safe)
+            }
+        """
+        LOGGER.info(f"Running complete validation pipeline for: {user_input[:50]}...")
+
+        # Validate input
+        validation = self.validate_input(user_input, context)
+
+        # Generate response
+        response_text = self.generate_response(user_input, validation)
+
+        # Decide if system should process this
+        should_process = validation.get("is_valid", True) and validation.get("is_safe", True)
+
+        return {
+            "validation": validation,
+            "response": response_text,
+            "should_process": should_process,
+        }

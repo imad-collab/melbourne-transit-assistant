@@ -24,7 +24,7 @@ from .parking_service import (
     fetch_parking_availability,
     list_parking_areas,
 )
-from .openai_assistant import TransitAssistant
+from .openai_assistant import TransitAssistant, InputValidator
 
 load_dotenv()
 
@@ -124,11 +124,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/find_parking <location> - Find parking near any location\n"
         "/parking_areas - List all configured parking areas\n\n"
         "🤖 AI Assistant:\n"
-        "/ask <question> - Ask anything about transit/parking (requires OpenAI API key)\n"
-        "Example: /ask Where can I park near Southern Cross?\n\n"
+        "/ask <question> - Ask about transit/parking\n"
+        "/analyze <text> - Analyze text (summary, sentiment, key points)\n"
+        "/validate <text> - Validate input (meaningfulness, safety, confidence)\n\n"
         "ℹ️ Info:\n"
         "/start - Welcome message\n"
-        "/help - This help"
+        "/help - This help\n\n"
+        "💡 Examples:\n"
+        "  /ask Where can I park near Southern Cross?\n"
+        "  /analyze Climate change is a serious global issue\n"
+        "  /validate Find parking near Flinders Street"
     )
     await message.reply_text(help_text)
 
@@ -626,6 +631,112 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.effective_message.reply_text("Sorry, an error occurred.")
 
 
+async def validate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /validate command for AI-powered input validation."""
+
+    try:
+        message = update.effective_message
+        if message is None:
+            return
+
+        LOGGER.info(f"Received /validate command with args: {context.args}")
+
+        # Get text to validate
+        if not context.args:
+            await message.reply_text(
+                "✅ Validate your input!\n\n"
+                "Usage: /validate <text_to_validate>\n\n"
+                "This will check if your input is:\n"
+                "  ✓ Meaningful and relevant\n"
+                "  ✓ Safe and appropriate\n"
+                "  ✓ Not spam or harmful\n\n"
+                "Examples:\n"
+                "  /validate Find parking near Flinders Street\n"
+                "  /validate When is the next train to Frankston?\n"
+                "  /validate Show parking areas downtown"
+            )
+            return
+
+        # Join args as the text
+        user_input = " ".join(context.args)
+        LOGGER.info(f"Validating input: {len(user_input)} chars")
+
+        # Get OpenAI API key
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not openai_key or openai_key == "your_openai_api_key_here":
+            await message.reply_text(
+                "❌ OpenAI not configured. Please set OPENAI_API_KEY in your .env file.\n\n"
+                "Get a free API key at: https://platform.openai.com/api-keys"
+            )
+            return
+
+        try:
+            # Show validating status
+            await message.reply_text("🔍 Validating your input...")
+
+            # Create validator
+            validator = InputValidator(openai_key)
+
+            # Validate input with context hint
+            result = validator.validate_and_respond(user_input, context="general_query")
+
+            # Extract validation result
+            validation_data = result.get("validation", {})
+            is_valid = validation_data.get("is_valid", False)
+            is_safe = validation_data.get("is_safe", False)
+            confidence = validation_data.get("confidence", 0.0)
+            reason = validation_data.get("reason", "Unknown")
+            suggestions = validation_data.get("suggestions", "")
+
+            # Format response
+            response_lines = []
+            response_lines.append("✅ Input Validation Results:\n")
+
+            # Status indicators
+            valid_emoji = "✅" if is_valid else "❌"
+            safe_emoji = "✅" if is_safe else "⚠️"
+
+            response_lines.append(f"{valid_emoji} Valid: {is_valid}")
+            response_lines.append(f"{safe_emoji} Safe: {is_safe}")
+            response_lines.append(f"🎯 Confidence: {confidence * 100:.1f}%")
+            response_lines.append("")
+
+            response_lines.append(f"📝 Assessment:\n{reason}")
+            response_lines.append("")
+
+            if suggestions and suggestions.strip():
+                response_lines.append(f"💡 Suggestions:\n{suggestions}")
+                response_lines.append("")
+
+            if is_valid and is_safe:
+                response_lines.append("✨ This input is ready to process!")
+                response_lines.append("")
+                response_lines.append("💬 You can now use commands like:")
+                response_lines.append("  /ask - Ask about transit")
+                response_lines.append("  /parking - Find parking")
+                response_lines.append("  /departures - Check departures")
+            else:
+                response_lines.append("⚠️ This input may need refinement before processing.")
+
+            text = "\n".join(response_lines)
+
+            # Check message length (Telegram limit is 4096)
+            if len(text) > 4000:
+                text = text[:3950] + "\n...(truncated)"
+
+            await message.reply_text(text)
+            LOGGER.info(f"Validation sent: valid={is_valid}, safe={is_safe}, confidence={confidence:.2f}")
+
+        except Exception as e:
+            LOGGER.exception(f"Input validation error: {e}")
+            await message.reply_text(f"❌ Error validating input: {str(e)[:100]}")
+
+    except Exception as e:
+        LOGGER.exception(f"Error in validate_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text("Sorry, an error occurred.")
+
+
 def build_application(config: BotConfig) -> Application:
     ptv_client = build_ptv_client(config)
     application: Application = (
@@ -643,6 +754,7 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CommandHandler("find_parking", find_parking_command))
     application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(CommandHandler("analyze", analyze_command))
+    application.add_handler(CommandHandler("validate", validate_command))
     application.add_handler(CommandHandler("parking_areas", list_parking_command))
 
     # Add error handler
