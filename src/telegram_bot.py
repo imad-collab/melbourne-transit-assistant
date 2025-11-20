@@ -257,12 +257,18 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         lines = [f"🅿️ Parking in {area_key}:"]
-        for item in availability[:10]:
+        
+        # Limit to 5 items to keep message under Telegram's 4096 char limit
+        for item in availability[:5]:
             status = item.get("status") or "UNKNOWN"
             available = item.get("available")
             total = item.get("total")
             name = item.get("name") or item.get("id")
             address = item.get("address") or "Address unavailable"
+            
+            # Shorten address if too long
+            if len(address) > 60:
+                address = address[:57] + "..."
             
             # Add emoji based on availability
             if status == "AVAILABLE":
@@ -273,10 +279,12 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 emoji = "❌"
             
             lines.append(
-                f"{emoji} {name}\n   {available}/{total} free | {address}"
+                f"{emoji} {name}\n   {available}/{total} free"
             )
 
-        await message.reply_text("\n".join(lines))
+        text = "\n".join(lines)
+        LOGGER.info(f"Sending parking response: {len(text)} chars")
+        await message.reply_text(text)
     except Exception as e:
         LOGGER.exception(f"Error in parking_command: {e}")
         if update.effective_message:
