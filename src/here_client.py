@@ -26,7 +26,8 @@ class HEREParkingClient:
         """Convert location name to coordinates (latitude, longitude).
         
         Returns tuple of (lat, lon) or None if not found.
-        STRICTLY filters to Victoria/Melbourne locations only.
+        STRICTLY filters to Victoria/Melbourne locations only using geographic bounds.
+        Tries with Melbourne/Victoria appended if initial search fails.
         
         Melbourne CBD Center: -37.8136, 144.9631
         Victoria bounding box: lat [-39.2, -34.1], lon [141.0, 150.0]
@@ -43,90 +44,94 @@ class HEREParkingClient:
             "lon_max": 150.0,
         }
         
-        params = {
-            "q": location,
-            "apikey": self.api_key,
-            "in": "countryCode:AUS",  # Restrict to Australia
-            "near": f"{melbourne_cbd_lat},{melbourne_cbd_lon}",  # Bias to Melbourne CBD
-            "limit": 10,  # Get more results to find the right one
-        }
+        # Try both with and without Melbourne specification
+        search_queries = [
+            location,  # First try original location
+            f"{location} Melbourne Victoria",  # Add Melbourne/Victoria if first fails
+        ]
+        
+        for attempt, search_query in enumerate(search_queries, 1):
+            params = {
+                "q": search_query,
+                "apikey": self.api_key,
+                "in": "countryCode:AUS",  # Restrict to Australia
+                "near": f"{melbourne_cbd_lat},{melbourne_cbd_lon}",  # Bias to Melbourne CBD
+                "limit": 10,  # Get more results to find the right one
+            }
 
-        LOGGER.debug("Geocoding location: %s (Melbourne, Victoria, Australia)", location)
+            LOGGER.info(f"Geocoding attempt {attempt}: '{search_query}'")
 
-        try:
-            response = self.session.get(
-                self.GEOCODE_URL, params=params, timeout=timeout
-            )
-            response.raise_for_status()
-            payload = response.json()
+            try:
+                response = self.session.get(
+                    self.GEOCODE_URL, params=params, timeout=timeout
+                )
+                response.raise_for_status()
+                payload = response.json()
 
-            items = payload.get("items", [])
-            if not items:
-                LOGGER.warning("No geocode results for: %s", location)
-                return None
+                items = payload.get("items", [])
+                if not items:
+                    LOGGER.debug(f"No results for '{search_query}'")
+                    continue
 
-            # STRICTLY filter for Victoria locations only using geographic bounds
-            # Geographic bounds are more reliable than address state field
-            victoria_items = []
-            for item in items:
-                address = item.get("address", {})
-                state = address.get("state", "")
-                position = item.get("position", {})
+                # STRICTLY filter for Victoria locations using geographic bounds
+                victoria_items = []
+                for item in items:
+                    address = item.get("address", {})
+                    state = address.get("state", "")
+                    position = item.get("position", {})
+                    lat = position.get("lat")
+                    lon = position.get("lng")
+                    label = address.get("label", "")
+                    
+                    # Primary check: within Victoria geographic bounds
+                    is_within_bounds = (
+                        lat and lon and
+                        VICTORIA_BOUNDS["lat_min"] <= lat <= VICTORIA_BOUNDS["lat_max"] and
+                        VICTORIA_BOUNDS["lon_min"] <= lon <= VICTORIA_BOUNDS["lon_max"]
+                    )
+                    
+                    if is_within_bounds:
+                        victoria_items.append(item)
+                        LOGGER.debug(f"✓ Victoria: {label} ({lat:.4f}, {lon:.4f}) [{state}]")
+                    else:
+                        LOGGER.debug(f"✗ Non-Victoria: {label} ({lat:.4f if lat else 0:.4f}, {lon:.4f if lon else 0:.4f}) [{state}]")
+                
+                if not victoria_items:
+                    LOGGER.debug(f"No Victoria results for '{search_query}' - trying next query")
+                    continue
+                
+                LOGGER.info(f"✓ Found {len(victoria_items)} Victoria location(s)")
+                
+                # Prefer Melbourne city, then other Victoria locations
+                best_item = None
+                for item in victoria_items:
+                    address = item.get("address", {})
+                    city = address.get("city", "").lower()
+                    if "melbourne" in city:
+                        best_item = item
+                        break
+                
+                # Use first Victoria result if no Melbourne match
+                if not best_item:
+                    best_item = victoria_items[0]
+                
+                position = best_item.get("position", {})
                 lat = position.get("lat")
                 lon = position.get("lng")
-                label = address.get("label", "")
-                
-                # Primary check: within Victoria geographic bounds
-                is_within_bounds = (
-                    lat and lon and
-                    VICTORIA_BOUNDS["lat_min"] <= lat <= VICTORIA_BOUNDS["lat_max"] and
-                    VICTORIA_BOUNDS["lon_min"] <= lon <= VICTORIA_BOUNDS["lon_max"]
-                )
-                
-                if is_within_bounds:
-                    victoria_items.append(item)
-                    LOGGER.info("✓ Victoria result: %s (%.4f, %.4f) [%s]", 
-                               label, lat, lon, state or "no state")
-                else:
-                    LOGGER.info("✗ REJECTED non-Victoria: %s (%.4f, %.4f) [%s]", 
-                               label, lat or 0, lon or 0, state)
-            
-            if not victoria_items:
-                LOGGER.warning("❌ NO VICTORIA RESULTS for '%s' - rejected %d locations outside bounds", 
-                             location, len(items))
-                return None
-            
-            LOGGER.info("✓ Found %d Victoria locations", len(victoria_items))
-            
-            # Prefer Melbourne city, then other Victoria locations
-            best_item = None
-            for item in victoria_items:
-                address = item.get("address", {})
-                city = address.get("city", "").lower()
-                if "melbourne" in city:
-                    best_item = item
-                    break
-            
-            # Use first Victoria result if no Melbourne match
-            if not best_item:
-                best_item = victoria_items[0]
-            
-            position = best_item.get("position", {})
-            lat = position.get("lat")
-            lon = position.get("lng")
 
-            if lat and lon:
-                address_label = best_item.get("address", {}).get("label", "")
-                state = best_item.get("address", {}).get("state", "")
-                LOGGER.info("✓ GEOCODED '%s' → (%.4f, %.4f) in %s - %s", 
-                          location, lat, lon, state or "Victoria", address_label)
-                return (lat, lon)
+                if lat and lon:
+                    address_label = best_item.get("address", {}).get("label", "")
+                    state = best_item.get("address", {}).get("state", "")
+                    LOGGER.info(f"✓ GEOCODED '{location}' → ({lat:.4f}, {lon:.4f}) in {state or 'Victoria'} - {address_label}")
+                    return (lat, lon)
 
-            return None
-
-        except requests.exceptions.RequestException as e:
-            LOGGER.error("Geocoding failed: %s", e)
-            raise
+            except requests.exceptions.RequestException as e:
+                LOGGER.error(f"Geocoding request failed for '{search_query}': {e}")
+                continue
+        
+        # If we get here, no Victoria results found
+        LOGGER.warning(f"❌ Could not find '{location}' in Victoria/Melbourne")
+        return None
 
     def search_parking_nearby(
         self,
