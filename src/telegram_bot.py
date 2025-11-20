@@ -88,8 +88,11 @@ def build_ptv_client(config: BotConfig) -> PTVClient:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Greet the user with a concise introduction."""
 
+    LOGGER.info(f"=== /start command received ===")
+    
     message = update.effective_message
     if message is None:
+        LOGGER.warning("No effective_message in /start update")
         return
 
     intro_lines = [
@@ -97,7 +100,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Use /departures <stop_id> [route_type] [max_results] to see upcoming services.",
         "Try /parking to discover available parking bays in the CBD.",
     ]
+    
+    LOGGER.info("Sending start message")
     await message.reply_text("\n".join(intro_lines))
+    LOGGER.info("=== /start command SUCCESS ===")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -130,16 +136,21 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         message = update.effective_message
         if message is None:
+            LOGGER.warning("No effective_message in update")
             return
 
-        LOGGER.info(f"Received /departures command with args: {context.args}")
+        LOGGER.info(f"=== /departures command START ===")
+        LOGGER.info(f"Args: {context.args}")
+        LOGGER.info(f"Bot data keys: {context.application.bot_data.keys()}")
 
         if not context.args:
+            LOGGER.info("No args provided, sending usage message")
             await message.reply_text("Usage: /departures <stop_id> [route_type] [max_results]")
             return
 
         stop_id = _parse_int(context.args[0])
         if stop_id is None:
+            LOGGER.info(f"Invalid stop_id: {context.args[0]}")
             await message.reply_text("Stop ID must be an integer")
             return
 
@@ -150,24 +161,29 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             _parse_int(context.args[2], default=5) if len(context.args) > 2 else 5
         ) or 5
 
-        ptv_client: PTVClient = context.application.bot_data["ptv_client"]
-
-        try:
-            LOGGER.info(f"Fetching departures: stop_id={stop_id}, route_type={route_type}, max_results={max_results}")
-            response = ptv_client.get_departures(
-                route_type=route_type,
-                stop_id=stop_id,
-                max_results=max_results,
-                expand=["run", "route", "stop"],
-            )
-            LOGGER.info(f"Response received: {len(response.get('departures', []))} departures")
-        except Exception as exc:  # noqa: BLE001 simple logging to user
-            LOGGER.exception("PTV departures request failed")
-            await message.reply_text(f"Failed to retrieve departures: {exc}")
+        LOGGER.info(f"Parsed: stop_id={stop_id}, route_type={route_type}, max_results={max_results}")
+        
+        ptv_client = context.application.bot_data.get("ptv_client")
+        if ptv_client is None:
+            LOGGER.error("PTVClient not found in bot_data!")
+            await message.reply_text("Bot configuration error: PTV client not initialized")
             return
+
+        LOGGER.info(f"Got PTVClient: {ptv_client}")
+        LOGGER.info(f"Calling get_departures...")
+        
+        response = ptv_client.get_departures(
+            route_type=route_type,
+            stop_id=stop_id,
+            max_results=max_results,
+            expand=["run", "route", "stop"],
+        )
+        
+        LOGGER.info(f"Response received: {len(response.get('departures', []))} departures")
 
         departures = response.get("departures", [])
         if not departures:
+            LOGGER.info("No departures in response")
             await message.reply_text("No upcoming departures found.")
             return
 
@@ -190,11 +206,17 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 )
             )
 
+        LOGGER.info(f"Sending response: {len(formatted_lines)} lines")
         await message.reply_text("\n".join(formatted_lines))
+        LOGGER.info(f"=== /departures command SUCCESS ===")
+        
     except Exception as e:
-        LOGGER.exception(f"Error in departures_command: {e}")
-        if update.effective_message:
-            await update.effective_message.reply_text("Sorry, an error occurred processing your request.")
+        LOGGER.exception(f"=== ERROR in departures_command ===: {e}")
+        try:
+            if update.effective_message:
+                await update.effective_message.reply_text(f"Error: {str(e)[:100]}")
+        except Exception as send_err:
+            LOGGER.error(f"Failed to send error message: {send_err}")
 
 
 async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -294,7 +316,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def _post_init(ptv_client: PTVClient):
     async def _initializer(app: Application) -> None:
+        LOGGER.info(f"Initializing bot_data with PTVClient: {ptv_client}")
         app.bot_data["ptv_client"] = ptv_client
+        LOGGER.info(f"Bot data initialized: {app.bot_data.keys()}")
     return _initializer
 
 
