@@ -38,4 +38,22 @@ CITY_PARKING_AREAS: Dict[str, CityParkingArea] = {
         longitude=144.3617,
         radius_m=1300,
     ),
+    "easypark_flinders": CityParkingArea(
+        display_name="EasyPark - Flinders Street",
+        latitude=-37.8182,
+        longitude=144.9651,
+        radius_m=500,
+    ),
+    "easypark_collins": CityParkingArea(
+        display_name="EasyPark - Collins Street",
+        latitude=-37.8162,
+        longitude=144.9640,
+        radius_m=500,
+    ),
+    "easypark_spencer": CityParkingArea(
+        display_name="EasyPark - Spencer Street",
+        latitude=-37.8183,
+        longitude=144.9549,
+        radius_m=500,
+    ),
 }
