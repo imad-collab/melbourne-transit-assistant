@@ -9,7 +9,6 @@ from config.parking import CITY_PARKING_AREAS, TOMTOM_API_KEY, HERE_API_KEY, Cit
 
 from .tomtom_client import TomTomParkingClient
 from .here_client import HEREParkingClient
-from .mock_parking import get_mock_parking
 
 LOGGER = logging.getLogger(__name__)
 
@@ -67,7 +66,8 @@ def fetch_parking_availability(
 ) -> List[dict]:
     """Fetch parking availability for the configured area.
     
-    Tries providers in order: HERE > TomTom > Mock data (fallback).
+    Uses real API data only: HERE > TomTom (no mock fallback).
+    Returns only real results from parking providers.
     """
 
     normalised_key = area_key.lower()
@@ -122,14 +122,14 @@ def fetch_parking_availability(
                 )
         except Exception as e:
             LOGGER.warning(
-                "TomTom API failed (%s), falling back to mock data for %s",
+                "TomTom API failed (%s): %s",
                 type(e).__name__,
                 area.display_name,
             )
 
-    # Fall back to mock data
-    LOGGER.info("Using mock parking data for %s", area.display_name)
-    return get_mock_parking(normalised_key)[:limit]
+    # No real data available
+    LOGGER.warning("No real parking data available for %s", area.display_name)
+    return []
 
 
 __all__ = [

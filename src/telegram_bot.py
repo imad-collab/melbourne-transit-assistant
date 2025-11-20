@@ -351,28 +351,28 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"No parking found near {location}")
             return
 
-        # Format response
-        lines = [f"🅿️ Parking near {location}:"]
+        # Format response - use only real HERE API data
+        lines = [f"🅿️ Parking locations near {location}:"]
         
         for i, item in enumerate(availability[:5], 1):
-            status = item.get("status") or "AVAILABLE"
-            available = item.get("available", "?")
-            total = item.get("total", "?")
             name = item.get("name", "Parking")
             distance = item.get("distance", 0)
+            address = item.get("address", "")
 
             # Convert distance to km or meters
             if distance > 1000:
-                distance_str = f"{distance/1000:.1f}km away"
+                distance_str = f"{distance/1000:.1f}km"
             else:
-                distance_str = f"{distance}m away"
+                distance_str = f"{distance}m"
 
-            # Emoji based on status
-            emoji = "✅" if status == "AVAILABLE" else "⚠️" if status == "LIMITED" else "❌"
-
-            lines.append(f"{emoji} {name}\n   {available}/{total} free • {distance_str}")
+            # Build simple response with real location data
+            lines.append(f"{i}. {name}")
+            lines.append(f"   📍 {distance_str} away")
+            if address and address != "Address unavailable":
+                lines.append(f"   📮 {address}")
 
         text = "\n".join(lines)
+        text += "\n\n💡 Note: Real-time availability data from parking operators coming soon"
         LOGGER.info(f"Sending find_parking response: {len(text)} chars")
         await message.reply_text(text)
 
