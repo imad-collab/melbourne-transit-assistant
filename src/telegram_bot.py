@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     AIORateLimiter,
     Application,
@@ -268,6 +268,7 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         lines = [f"🅿️ Parking in {area_key}:"]
+        keyboard = []
         
         # Limit to 5 items to keep message under Telegram's 4096 char limit
         for item in availability[:5]:
@@ -276,6 +277,8 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             total = item.get("total")
             name = item.get("name") or item.get("id")
             address = item.get("address") or "Address unavailable"
+            latitude = item.get("latitude")
+            longitude = item.get("longitude")
             
             # Shorten address if too long
             if len(address) > 60:
@@ -292,10 +295,22 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             lines.append(
                 f"{emoji} {name}\n   {available}/{total} free"
             )
+            
+            # Add Google Maps button if coordinates available
+            if latitude is not None and longitude is not None:
+                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}"
+                button_text = f"📍 {name} - Directions"
+                keyboard.append([InlineKeyboardButton(button_text, url=maps_url)])
 
         text = "\n".join(lines)
         LOGGER.info(f"Sending parking response: {len(text)} chars")
-        await message.reply_text(text)
+        
+        # Add keyboard to message if we have buttons
+        if keyboard:
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await message.reply_text(text, reply_markup=reply_markup)
+        else:
+            await message.reply_text(text)
     except Exception as e:
         LOGGER.exception(f"Error in parking_command: {e}")
         if update.effective_message:
@@ -351,7 +366,7 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"No parking found near {location}")
             return
 
-        # Format response - use only real HERE API data with coordinates
+        # Format response with inline keyboard buttons for Google Maps
         lines = [f"🅿️ Parking spots near {location}:\n"]
         
         for i, item in enumerate(availability[:5], 1):
@@ -378,7 +393,26 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         text = "\n".join(lines)
         LOGGER.info(f"Sending find_parking response: {len(text)} chars")
-        await message.reply_text(text)
+        
+        # Create inline keyboard with Google Maps buttons
+        keyboard = []
+        for i, item in enumerate(availability[:5], 1):
+            latitude = item.get("latitude")
+            longitude = item.get("longitude")
+            name = item.get("name", f"Parking {i}")
+            
+            if latitude is not None and longitude is not None:
+                # Create Google Maps URL
+                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}"
+                button_text = f"📍 {name} - Get Directions"
+                keyboard.append([InlineKeyboardButton(button_text, url=maps_url)])
+        
+        # Add keyboard to message if we have buttons
+        if keyboard:
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await message.reply_text(text, reply_markup=reply_markup)
+        else:
+            await message.reply_text(text)
 
     except Exception as e:
         LOGGER.exception(f"Error in find_parking_command: {e}")
