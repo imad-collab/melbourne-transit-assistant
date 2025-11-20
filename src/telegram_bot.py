@@ -122,6 +122,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "🅿️ Parking:\n"
         "/parking [area_key] - Parking in configured areas (melbourne_cbd, geelong_cbd)\n"
         "/find_parking <location> - Find parking near any location\n"
+        "/bays [location] - Show parking bay occupancy (🟢 Free, 🔴 Occupied)\n"
         "/parking_areas - List all configured parking areas\n\n"
         "🤖 AI Assistant:\n"
         "/ask <question> - Ask about transit/parking\n"
@@ -132,6 +133,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/help - This help\n\n"
         "💡 Examples:\n"
         "  /ask Where can I park near Southern Cross?\n"
+        "  /bays Southern Cross Station\n"
         "  /analyze Climate change is a serious global issue\n"
         "  /validate Find parking near Flinders Street"
     )
@@ -303,8 +305,8 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             
             # Add Google Maps button if coordinates available
             if latitude is not None and longitude is not None:
-                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}"
-                button_text = f"📍 {name} - Directions"
+                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}&travelmode=driving"
+                button_text = f"�️ {name} - Navigate"
                 keyboard.append([InlineKeyboardButton(button_text, url=maps_url)])
 
         text = "\n".join(lines)
@@ -407,6 +409,7 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
         LOGGER.info(f"Sending find_parking response: {len(text)} chars with {len(nearby_parking)} spots under 1km")
         
         # Create inline keyboard with Google Maps buttons
+        # Maps will use user's current device location as origin automatically
         keyboard = []
         for item in nearby_parking:
             latitude = item.get("latitude")
@@ -414,9 +417,11 @@ async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
             name = item.get("name", "Parking")
             
             if latitude is not None and longitude is not None:
-                # Create Google Maps URL
-                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}"
-                button_text = f"📍 {name} - Get Directions"
+                # Create Google Maps navigation URL
+                # Using mode=d for driving directions
+                # Google Maps will auto-detect user's current location
+                maps_url = f"https://www.google.com/maps/dir/?api=1&destination={latitude},{longitude}&travelmode=driving"
+                button_text = f"�️ {name} - Navigate"
                 keyboard.append([InlineKeyboardButton(button_text, url=maps_url)])
         
         # Add keyboard to message if we have buttons
@@ -737,6 +742,90 @@ async def validate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await update.effective_message.reply_text("Sorry, an error occurred.")
 
 
+async def bays_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /bays command to show parking bay occupancy."""
+    
+    try:
+        message = update.effective_message
+        if message is None:
+            return
+        
+        LOGGER.info(f"Received /bays command with args: {context.args}")
+        
+        from .bay_occupancy import BayOccupancyTracker, BayStatistics
+        
+        # Get HERE API key
+        here_api_key = os.getenv("HERE_API_KEY", "").strip()
+        if not here_api_key:
+            await message.reply_text("❌ HERE API key not configured")
+            return
+        
+        # Initialize tracker
+        tracker = BayOccupancyTracker(here_api_key)
+        
+        # Default location: Southern Cross Station (Melbourne CBD)
+        location = " ".join(context.args) if context.args else "Southern Cross Station"
+        latitude = -37.8174
+        longitude = 144.9537
+        
+        if context.args:
+            LOGGER.info(f"Looking up coordinates for: {location}")
+            from .here_client import HEREParkingClient
+            here_client = HEREParkingClient(here_api_key)
+            geocoded = here_client.geocode_location(location)
+            if geocoded:
+                latitude, longitude = geocoded
+            else:
+                await message.reply_text(f"❌ Could not find location: {location}")
+                return
+        
+        # Get bay data
+        await message.reply_text(f"🔍 Loading parking bay data for {location}...")
+        
+        all_bays = tracker.simulate_bay_data(location, latitude, longitude, num_bays=6)
+        free_bays = [bay for bay in all_bays if bay.is_free()]
+        
+        # Format response
+        text, buttons = tracker.format_bays_with_links(location, free_bays)
+        
+        # Add statistics
+        occupancy_rate = BayStatistics.get_occupancy_rate(all_bays)
+        availability_forecast = BayStatistics.get_availability_forecast(all_bays)
+        
+        stats_text = f"\n📊 Statistics:\n"
+        stats_text += f"   Occupancy: {occupancy_rate:.1f}%\n"
+        stats_text += f"   {availability_forecast}"
+        
+        full_text = text + stats_text
+        
+        # Create inline keyboard for navigation
+        keyboard = []
+        for i in range(0, len(buttons), 2):
+            row = []
+            if i < len(buttons):
+                btn = buttons[i]
+                row.append(InlineKeyboardButton(btn["text"], url=btn["url"]))
+            if i + 1 < len(buttons):
+                btn = buttons[i + 1]
+                row.append(InlineKeyboardButton(btn["text"], url=btn["url"]))
+            if row:
+                keyboard.append(row)
+        
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        # Check message length
+        if len(full_text) > 4000:
+            full_text = full_text[:3950] + "\n...(truncated)"
+        
+        await message.reply_text(full_text, reply_markup=reply_markup)
+        LOGGER.info(f"Bay occupancy sent: {len(free_bays)} free bays, {len(all_bays)} total")
+        
+    except Exception as e:
+        LOGGER.exception(f"Error in bays_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text(f"❌ Error fetching bay data: {str(e)[:100]}")
+
+
 def build_application(config: BotConfig) -> Application:
     ptv_client = build_ptv_client(config)
     application: Application = (
@@ -755,6 +844,7 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(CommandHandler("analyze", analyze_command))
     application.add_handler(CommandHandler("validate", validate_command))
+    application.add_handler(CommandHandler("bays", bays_command))
     application.add_handler(CommandHandler("parking_areas", list_parking_command))
 
     # Add error handler
