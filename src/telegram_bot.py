@@ -131,6 +131,8 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if message is None:
         return
 
+    LOGGER.info(f"Received /departures command with args: {context.args}")
+
     if not context.args:
         await message.reply_text("Usage: /departures <stop_id> [route_type] [max_results]")
         return
@@ -150,12 +152,14 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ptv_client: PTVClient = context.application.bot_data["ptv_client"]
 
     try:
+        LOGGER.info(f"Fetching departures: stop_id={stop_id}, route_type={route_type}, max_results={max_results}")
         response = ptv_client.get_departures(
             route_type=route_type,
             stop_id=stop_id,
             max_results=max_results,
             expand=["run", "route", "stop"],
         )
+        LOGGER.info(f"Response received: {len(response.get('departures', []))} departures")
     except Exception as exc:  # noqa: BLE001 simple logging to user
         LOGGER.exception("PTV departures request failed")
         await message.reply_text(f"Failed to retrieve departures: {exc}")
@@ -171,7 +175,7 @@ async def departures_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "",
     ]
 
-    for dep in departures:
+    for dep in departures[:10]:
         run_id = dep.get("run_id")
         route_id = dep.get("route_id")
         estimated = dep.get("estimated_departure_utc") or dep.get("scheduled_departure_utc")
@@ -195,10 +199,14 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if message is None:
         return
 
+    LOGGER.info(f"Received /parking command with args: {context.args}")
+
     area_key = context.args[0].lower() if context.args else "melbourne_cbd"
 
     try:
+        LOGGER.info(f"Fetching parking availability for area: {area_key}")
         availability = fetch_parking_availability(area_key)
+        LOGGER.info(f"Got {len(availability)} parking locations")
     except UnknownParkingAreaError:
         suggestions = ", ".join(area.key for area in list_parking_areas())
         await message.reply_text(f"Unknown area '{area_key}'. Try one of: {suggestions}")
@@ -266,11 +274,21 @@ def _post_init(ptv_client: PTVClient):
 
 
 def run_bot() -> None:
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     config = build_bot_config()
     application = build_application(config)
     LOGGER.info("Starting Telegram bot")
-    application.run_polling(close_loop=False)
+    LOGGER.info("Bot is listening for messages. Press Ctrl+C to stop.")
+    try:
+        application.run_polling(close_loop=False, allowed_updates=Update.ALL_TYPES)
+    except KeyboardInterrupt:
+        LOGGER.info("Bot stopped by user")
+    except Exception as e:
+        LOGGER.error(f"Fatal error: {e}")
+        raise
 
 
 if __name__ == "__main__":
