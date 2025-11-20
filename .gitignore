@@ -36,3 +36,4 @@ config/credentials.py
 
 # Logs
 *.log
+.env

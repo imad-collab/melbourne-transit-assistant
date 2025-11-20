@@ -14,6 +14,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from .ptv_client import PTVClient
@@ -22,6 +24,7 @@ from .parking_service import (
     fetch_parking_availability,
     list_parking_areas,
 )
+from .openai_assistant import TransitAssistant
 
 load_dotenv()
 
@@ -120,6 +123,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/parking [area_key] - Parking in configured areas (melbourne_cbd, geelong_cbd)\n"
         "/find_parking <location> - Find parking near any location\n"
         "/parking_areas - List all configured parking areas\n\n"
+        "🤖 AI Assistant:\n"
+        "/ask <question> - Ask anything about transit/parking (requires OpenAI API key)\n"
+        "Example: /ask Where can I park near Southern Cross?\n\n"
         "ℹ️ Info:\n"
         "/start - Welcome message\n"
         "/help - This help"
@@ -387,6 +393,102 @@ async def list_parking_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await message.reply_text("\n".join(lines))
 
 
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /ask command for natural language queries."""
+
+    try:
+        message = update.effective_message
+        if message is None:
+            return
+
+        LOGGER.info(f"Received /ask command with args: {context.args}")
+
+        # Get query from arguments
+        if not context.args:
+            await message.reply_text(
+                "Ask me anything about Melbourne transit or parking!\n\n"
+                "Examples:\n"
+                "  /ask Where can I park near Southern Cross Station?\n"
+                "  /ask What trains depart from Flinders Street?\n"
+                "  /ask Find me parking near Queen Vic Market"
+            )
+            return
+
+        # Join args as the query
+        user_query = " ".join(context.args)
+        LOGGER.info(f"Processing AI query: {user_query}")
+
+        # Get OpenAI API key
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not openai_key or openai_key == "your_openai_api_key_here":
+            await message.reply_text(
+                "❌ OpenAI not configured. Please set OPENAI_API_KEY in your .env file.\n\n"
+                "Get a free API key at: https://platform.openai.com/api-keys"
+            )
+            return
+
+        try:
+            # Use OpenAI to understand the query
+            assistant = TransitAssistant(openai_key)
+            intent = assistant.understand_query(user_query)
+            LOGGER.info(f"Query intent: {intent}")
+
+            # Route based on intent
+            if intent.get("type") == "parking":
+                location = intent.get("location")
+                if not location:
+                    await message.reply_text("❌ Could not understand the location. Please try again.")
+                    return
+
+                await message.reply_text(f"🔍 Searching parking near {location}...")
+
+                try:
+                    from .here_client import HEREParkingClient
+                    from config.parking import HERE_API_KEY
+
+                    if not HERE_API_KEY:
+                        await message.reply_text("Parking search not configured.")
+                        return
+
+                    client = HEREParkingClient(HERE_API_KEY)
+                    parking_data = client.search_parking_by_location(location, limit=5)
+                    
+                    # Format response
+                    response_lines = [f"🅿️ Parking near {location}:"]
+                    for item in parking_data[:5]:
+                        name = item.get("name", "Parking")
+                        available = item.get("available", "?")
+                        total = item.get("total", "?")
+                        response_lines.append(f"  • {name}: {available}/{total} free")
+
+                    await message.reply_text("\n".join(response_lines))
+
+                except Exception as e:
+                    LOGGER.exception(f"Parking search failed: {e}")
+                    await message.reply_text(f"❌ Could not find parking: {e}")
+
+            elif intent.get("type") == "departures":
+                stop = intent.get("stop")
+                if not stop:
+                    await message.reply_text("❌ Could not understand the stop. Please try again.")
+                    return
+
+                await message.reply_text(f"🔍 Searching departures from {stop}...")
+                await message.reply_text("Coming soon: Departures search via AI is in development!")
+
+            else:
+                await message.reply_text("I can help you find parking or transit information. Try asking about either!")
+
+        except Exception as e:
+            LOGGER.exception(f"AI processing error: {e}")
+            await message.reply_text(f"❌ Error processing query: {str(e)[:100]}")
+
+    except Exception as e:
+        LOGGER.exception(f"Error in ask_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text("Sorry, an error occurred.")
+
+
 def build_application(config: BotConfig) -> Application:
     ptv_client = build_ptv_client(config)
     application: Application = (
@@ -402,6 +504,7 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CommandHandler("departures", departures_command))
     application.add_handler(CommandHandler("parking", parking_command))
     application.add_handler(CommandHandler("find_parking", find_parking_command))
+    application.add_handler(CommandHandler("ask", ask_command))
     application.add_handler(CommandHandler("parking_areas", list_parking_command))
 
     # Add error handler

@@ -12,6 +12,7 @@ load_dotenv()
 
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", "")
 HERE_API_KEY = os.getenv("HERE_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
 @dataclass(frozen=True)
