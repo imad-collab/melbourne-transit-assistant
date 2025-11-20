@@ -1,13 +1,14 @@
-"""High-level helpers for TomTom parking availability with mock fallback."""
+"""High-level helpers for parking availability with multiple provider support."""
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 
-from config.parking import CITY_PARKING_AREAS, TOMTOM_API_KEY, CityParkingArea
+from config.parking import CITY_PARKING_AREAS, TOMTOM_API_KEY, HERE_API_KEY, CityParkingArea
 
 from .tomtom_client import TomTomParkingClient
+from .here_client import HEREParkingClient
 from .mock_parking import get_mock_parking
 
 LOGGER = logging.getLogger(__name__)
@@ -64,9 +65,9 @@ def fetch_parking_availability(
     status_filter: Optional[Iterable[str]] = DEFAULT_STATUS_FILTER,
     timeout: int = 10,
 ) -> List[dict]:
-    """Fetch parking availability for the configured area via TomTom.
+    """Fetch parking availability for the configured area.
     
-    Falls back to mock data if TomTom API is unavailable or not configured.
+    Tries providers in order: HERE > TomTom > Mock data (fallback).
     """
 
     normalised_key = area_key.lower()
@@ -74,10 +75,34 @@ def fetch_parking_availability(
     if not area:
         raise UnknownParkingAreaError(f"Unknown parking area: {area_key}")
 
-    api_key = TOMTOM_API_KEY
-    
-    # Try real TomTom API if key is configured
-    if api_key:
+    # Try HERE API first (preferred - works with your current key)
+    if HERE_API_KEY:
+        try:
+            LOGGER.debug(
+                "Fetching HERE parking availability for %s (lat=%s, lon=%s)",
+                area.display_name,
+                area.latitude,
+                area.longitude,
+            )
+            client = HEREParkingClient(HERE_API_KEY)
+            results = client.search_parking_nearby(
+                latitude=area.latitude,
+                longitude=area.longitude,
+                limit=limit,
+                timeout=timeout,
+            )
+            LOGGER.info("Got %d parking locations from HERE API", len(results))
+            return results
+        except Exception as e:
+            LOGGER.warning(
+                "HERE API failed (%s), trying TomTom for %s",
+                type(e).__name__,
+                area.display_name,
+            )
+
+    # Try TomTom API as fallback
+    tomtom_key = TOMTOM_API_KEY
+    if tomtom_key:
         try:
             LOGGER.debug(
                 "Fetching TomTom parking availability for %s (lat=%s, lon=%s, radius=%s)",
@@ -86,7 +111,7 @@ def fetch_parking_availability(
                 area.longitude,
                 area.radius_m,
             )
-            with TomTomParkingClient(api_key) as client:
+            with TomTomParkingClient(tomtom_key) as client:
                 return client.get_within_circle(
                     latitude=area.latitude,
                     longitude=area.longitude,
@@ -101,10 +126,9 @@ def fetch_parking_availability(
                 type(e).__name__,
                 area.display_name,
             )
-    else:
-        LOGGER.info("No TomTom API key configured, using mock parking data for %s", area.display_name)
-    
+
     # Fall back to mock data
+    LOGGER.info("Using mock parking data for %s", area.display_name)
     return get_mock_parking(normalised_key)[:limit]
 
 

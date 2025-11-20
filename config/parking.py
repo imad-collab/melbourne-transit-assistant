@@ -1,4 +1,4 @@
-"""Configuration helpers for parking integrations (currently TomTom)."""
+"""Configuration helpers for parking integrations (TomTom and HERE)."""
 from __future__ import annotations
 
 import os
@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", "")
+HERE_API_KEY = os.getenv("HERE_API_KEY", "")
 
 
 @dataclass(frozen=True)
