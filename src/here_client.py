@@ -26,14 +26,22 @@ class HEREParkingClient:
         """Convert location name to coordinates (latitude, longitude).
         
         Returns tuple of (lat, lon) or None if not found.
-        Biased to Melbourne CBD, Victoria, Australia.
+        STRICTLY filters to Victoria/Melbourne locations only.
         
         Melbourne CBD Center: -37.8136, 144.9631
-        Search radius: ~30km to catch suburbs
+        Victoria bounding box: lat [-39.2, -34.1], lon [141.0, 150.0]
         """
         # Melbourne CBD center for proximity bias
         melbourne_cbd_lat = -37.8136
         melbourne_cbd_lon = 144.9631
+        
+        # Victoria bounding box to validate results
+        VICTORIA_BOUNDS = {
+            "lat_min": -39.2,
+            "lat_max": -34.1,
+            "lon_min": 141.0,
+            "lon_max": 150.0,
+        }
         
         params = {
             "q": location,
@@ -43,7 +51,7 @@ class HEREParkingClient:
             "limit": 10,  # Get more results to find the right one
         }
 
-        LOGGER.debug("Geocoding location: %s (Melbourne, Australia)", location)
+        LOGGER.debug("Geocoding location: %s (Melbourne, Victoria, Australia)", location)
 
         try:
             response = self.session.get(
@@ -57,25 +65,48 @@ class HEREParkingClient:
                 LOGGER.warning("No geocode results for: %s", location)
                 return None
 
-            # Try to find result in Victoria (Melbourne state)
-            best_item = None
+            # STRICTLY filter for Victoria locations only
+            victoria_items = []
             for item in items:
                 address = item.get("address", {})
                 state = address.get("state", "")
-                city = address.get("city", "").lower()
+                position = item.get("position", {})
+                lat = position.get("lat")
+                lon = position.get("lng")
                 
-                # Prioritize Melbourne/Victoria results
-                if "Victoria" in state or "VIC" in state or state == "VIC":
-                    # Prefer Melbourne city proper, then suburbs
-                    if "melbourne" in city.lower():
-                        best_item = item
-                        break
-                    elif not best_item:
-                        best_item = item
+                # Check both state name AND geographic bounds
+                is_victoria_state = "Victoria" in state or "VIC" in state or state == "VIC"
+                is_within_bounds = (
+                    lat and lon and
+                    VICTORIA_BOUNDS["lat_min"] <= lat <= VICTORIA_BOUNDS["lat_max"] and
+                    VICTORIA_BOUNDS["lon_min"] <= lon <= VICTORIA_BOUNDS["lon_max"]
+                )
+                
+                if is_victoria_state and is_within_bounds:
+                    victoria_items.append(item)
+                    LOGGER.debug("Valid Victoria location: %s (%s)", 
+                               address.get("label", ""), state)
+                else:
+                    LOGGER.debug("Rejected non-Victoria location: %s (%s) at (%.4f, %.4f)", 
+                               address.get("label", ""), state, lat or 0, lon or 0)
             
-            # Fall back to first result if no Victoria match
+            if not victoria_items:
+                LOGGER.warning("No Victoria/Melbourne results found for: %s. Found %d non-Victoria results.", 
+                             location, len(items))
+                return None
+            
+            # Prefer Melbourne city, then other Victoria locations
+            best_item = None
+            for item in victoria_items:
+                address = item.get("address", {})
+                city = address.get("city", "").lower()
+                if "melbourne" in city:
+                    best_item = item
+                    break
+            
+            # Use first Victoria result if no Melbourne match
             if not best_item:
-                best_item = items[0]
+                best_item = victoria_items[0]
             
             position = best_item.get("position", {})
             lat = position.get("lat")
@@ -83,7 +114,9 @@ class HEREParkingClient:
 
             if lat and lon:
                 address_label = best_item.get("address", {}).get("label", "")
-                LOGGER.info("Geocoded '%s' to (%.4f, %.4f) - %s", location, lat, lon, address_label)
+                state = best_item.get("address", {}).get("state", "")
+                LOGGER.info("Geocoded '%s' to (%.4f, %.4f) in %s - %s", 
+                          location, lat, lon, state, address_label)
                 return (lat, lon)
 
             return None
