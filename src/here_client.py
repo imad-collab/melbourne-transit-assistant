@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import requests
 
@@ -10,15 +10,56 @@ LOGGER = logging.getLogger(__name__)
 
 
 class HEREParkingClient:
-    """Wrapper around HERE Discover API for parking location search."""
+    """Wrapper around HERE Discover and Geocode APIs for parking location search."""
 
     DISCOVER_URL = "https://discover.search.hereapi.com/v1/discover"
+    GEOCODE_URL = "https://geocode.search.hereapi.com/v1/geocode"
 
     def __init__(self, api_key: str, session: Optional[requests.Session] = None) -> None:
         if not api_key:
             raise ValueError("HERE API key is required")
         self.api_key = api_key
         self.session = session or requests.Session()
+
+    def geocode_location(self, location: str, timeout: int = 10) -> Optional[Tuple[float, float]]:
+        """Convert location name to coordinates (latitude, longitude).
+        
+        Returns tuple of (lat, lon) or None if not found.
+        """
+        params = {
+            "q": location,
+            "apikey": self.api_key,
+        }
+
+        LOGGER.debug("Geocoding location: %s", location)
+
+        try:
+            response = self.session.get(
+                self.GEOCODE_URL, params=params, timeout=timeout
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+            items = payload.get("items", [])
+            if not items:
+                LOGGER.warning("No geocode results for: %s", location)
+                return None
+
+            # Use first result
+            first_item = items[0]
+            position = first_item.get("position", {})
+            lat = position.get("lat")
+            lon = position.get("lng")
+
+            if lat and lon:
+                LOGGER.debug("Geocoded '%s' to (%.4f, %.4f)", location, lat, lon)
+                return (lat, lon)
+
+            return None
+
+        except requests.exceptions.RequestException as e:
+            LOGGER.error("Geocoding failed: %s", e)
+            raise
 
     def search_parking_nearby(
         self,
@@ -92,3 +133,31 @@ class HEREParkingClient:
         except (KeyError, ValueError) as e:
             LOGGER.error("Failed to parse HERE API response: %s", e)
             raise
+
+    def search_parking_by_location(
+        self, location: str, limit: int = 5, timeout: int = 10
+    ) -> List[dict]:
+        """Search for parking near a named location (e.g., 'Southern Cross Station').
+        
+        Args:
+            location: Name of location to search near
+            limit: Maximum parking results to return
+            timeout: Request timeout in seconds
+            
+        Returns:
+            List of parking facilities near the location
+        """
+        LOGGER.info("Searching parking near: %s", location)
+
+        # First, geocode the location to get coordinates
+        coords = self.geocode_location(location, timeout=timeout)
+        if not coords:
+            raise ValueError(f"Could not find location: {location}")
+
+        lat, lon = coords
+        LOGGER.info("Found location at (%.4f, %.4f), searching for parking", lat, lon)
+
+        # Now search for parking near those coordinates
+        return self.search_parking_nearby(
+            latitude=lat, longitude=lon, limit=limit, timeout=timeout
+        )

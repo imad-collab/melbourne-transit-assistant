@@ -113,11 +113,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     help_text = (
-        "Available commands:\n"
-        "/start - Show a welcome message\n"
-        "/help - Display this help output\n"
-        "/departures <stop_id> [route_type] [max_results] - Upcoming departures\n"
-        "/parking [area_key] - Parking availability for configured areas"
+        "Available commands:\n\n"
+        "🚆 Transit:\n"
+        "/departures <stop_id> [route_type] [max_results] - Upcoming departures\n\n"
+        "🅿️ Parking:\n"
+        "/parking [area_key] - Parking in configured areas (melbourne_cbd, geelong_cbd)\n"
+        "/find_parking <location> - Find parking near any location\n"
+        "/parking_areas - List all configured parking areas\n\n"
+        "ℹ️ Info:\n"
+        "/start - Welcome message\n"
+        "/help - This help"
     )
     await message.reply_text(help_text)
 
@@ -291,6 +296,86 @@ async def parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.effective_message.reply_text("Sorry, an error occurred processing your request.")
 
 
+async def find_parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Find parking near a specific location (e.g., 'Southern Cross Station')."""
+
+    try:
+        message = update.effective_message
+        if message is None:
+            return
+
+        LOGGER.info(f"Received /find_parking command with args: {context.args}")
+
+        # Get location from arguments
+        if not context.args:
+            await message.reply_text(
+                "Usage: /find_parking <location>\n\n"
+                "Examples:\n"
+                "  /find_parking Southern Cross Station\n"
+                "  /find_parking Flinders Street\n"
+                "  /find_parking Queen Victoria Market"
+            )
+            return
+
+        # Join args as location name
+        location = " ".join(context.args)
+        LOGGER.info(f"Searching parking near: {location}")
+
+        try:
+            from .here_client import HEREParkingClient
+            from config.parking import HERE_API_KEY
+
+            if not HERE_API_KEY:
+                await message.reply_text("Parking search not configured (missing HERE API key).")
+                return
+
+            client = HEREParkingClient(HERE_API_KEY)
+            availability = client.search_parking_by_location(location, limit=5)
+            LOGGER.info(f"Found {len(availability)} parking locations near {location}")
+
+        except ValueError as e:
+            await message.reply_text(f"❌ Location not found: {location}\n\nPlease try a known Melbourne location.")
+            return
+        except Exception as e:
+            LOGGER.exception(f"Parking search failed: {e}")
+            await message.reply_text(f"❌ Parking search failed: {e}")
+            return
+
+        if not availability:
+            await message.reply_text(f"No parking found near {location}")
+            return
+
+        # Format response
+        lines = [f"🅿️ Parking near {location}:"]
+        
+        for i, item in enumerate(availability[:5], 1):
+            status = item.get("status") or "AVAILABLE"
+            available = item.get("available", "?")
+            total = item.get("total", "?")
+            name = item.get("name", "Parking")
+            distance = item.get("distance", 0)
+
+            # Convert distance to km or meters
+            if distance > 1000:
+                distance_str = f"{distance/1000:.1f}km away"
+            else:
+                distance_str = f"{distance}m away"
+
+            # Emoji based on status
+            emoji = "✅" if status == "AVAILABLE" else "⚠️" if status == "LIMITED" else "❌"
+
+            lines.append(f"{emoji} {name}\n   {available}/{total} free • {distance_str}")
+
+        text = "\n".join(lines)
+        LOGGER.info(f"Sending find_parking response: {len(text)} chars")
+        await message.reply_text(text)
+
+    except Exception as e:
+        LOGGER.exception(f"Error in find_parking_command: {e}")
+        if update.effective_message:
+            await update.effective_message.reply_text("Sorry, an error occurred processing your request.")
+
+
 async def list_parking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     areas = list_parking_areas()
     message = update.effective_message
@@ -316,6 +401,7 @@ def build_application(config: BotConfig) -> Application:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("departures", departures_command))
     application.add_handler(CommandHandler("parking", parking_command))
+    application.add_handler(CommandHandler("find_parking", find_parking_command))
     application.add_handler(CommandHandler("parking_areas", list_parking_command))
 
     # Add error handler
