@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from typing import List, Optional, Tuple
 
 import requests
@@ -25,13 +26,16 @@ class HEREParkingClient:
         """Convert location name to coordinates (latitude, longitude).
         
         Returns tuple of (lat, lon) or None if not found.
+        Biased to Melbourne, Australia region.
         """
         params = {
             "q": location,
             "apikey": self.api_key,
+            "in": "countryCode:AUS",  # Restrict to Australia
+            "limit": 10,  # Get more results to find the right one
         }
 
-        LOGGER.debug("Geocoding location: %s", location)
+        LOGGER.debug("Geocoding location: %s (Australia)", location)
 
         try:
             response = self.session.get(
@@ -45,14 +49,26 @@ class HEREParkingClient:
                 LOGGER.warning("No geocode results for: %s", location)
                 return None
 
-            # Use first result
-            first_item = items[0]
-            position = first_item.get("position", {})
+            # Try to find result in Victoria (Melbourne state) or use first result
+            best_item = None
+            for item in items:
+                address = item.get("address", {})
+                state = address.get("state", "")
+                if "Victoria" in state or "VIC" in state or state == "VIC":
+                    best_item = item
+                    break
+            
+            # Fall back to first result if no Victoria match
+            if not best_item:
+                best_item = items[0]
+            
+            position = best_item.get("position", {})
             lat = position.get("lat")
             lon = position.get("lng")
 
             if lat and lon:
-                LOGGER.debug("Geocoded '%s' to (%.4f, %.4f)", location, lat, lon)
+                address_label = best_item.get("address", {}).get("label", "")
+                LOGGER.debug("Geocoded '%s' to (%.4f, %.4f) - %s", location, lat, lon, address_label)
                 return (lat, lon)
 
             return None
